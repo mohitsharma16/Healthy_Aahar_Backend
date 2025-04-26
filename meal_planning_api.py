@@ -17,6 +17,8 @@ app = FastAPI()
 # Load environment variables
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    raise RuntimeError("GEMINI_API_KEY not found in environment variables.")
 
 # Configure Gemini AI
 genai.configure(api_key=GEMINI_API_KEY)
@@ -24,6 +26,8 @@ gemini_model = genai.GenerativeModel("gemini-2.0-flash")
 
 # MongoDB Connection
 MONGODB_URI = os.getenv("MONGODB_URI")
+if not MONGODB_URI:
+    raise RuntimeError("MONGODB_URI not found in environment variables.")
 client = pymongo.MongoClient(MONGODB_URI)
 db = client["Healthy_Aahar"]
 users_collection = db["users"]
