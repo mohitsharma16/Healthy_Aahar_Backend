@@ -215,12 +215,12 @@ def generate_meal_plan(uid: str):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    user_name = user["name"]  # We still need username to save and find meal plans
+    user_name = user["name"]  # We can still store/display the user's name if needed
 
     today_date = datetime.utcnow().date()
 
     existing_plan = meal_plans_collection.find_one({
-        "user_name": user_name,
+        "uid": uid,
         "date": str(today_date)
     })
 
@@ -263,7 +263,8 @@ def generate_meal_plan(uid: str):
         meal_plan.append(meal)
 
     meal_plan_data = {
-        "user_name": user_name,
+        "uid": uid,                       # <<< ADDED this
+        "user_name": user_name,            # <<< Still keeping username for info
         "meal_plan": meal_plan,
         "date": str(today_date)
     }
@@ -275,9 +276,9 @@ def generate_meal_plan(uid: str):
 class SwapMealRequest(BaseModel):
     meal_index: int
 
-@app.put("/swap_meal/{user_name}")
-def swap_meal(user_name: str, request: SwapMealRequest):
-    user_meal_plan = meal_plans_collection.find_one({"user_name": user_name})
+@app.put("/swap_meal/{uid}")
+def swap_meal(uid: str, request: SwapMealRequest):
+    user_meal_plan = meal_plans_collection.find_one({"uid": uid})
     if not user_meal_plan:
         raise HTTPException(status_code=404, detail="Meal plan not found")
 
@@ -292,10 +293,11 @@ def swap_meal(user_name: str, request: SwapMealRequest):
     if new_meal:
         new_meal["_id"] = str(new_meal["_id"])  # Convert ObjectId to string
         meal_plan[request.meal_index] = new_meal
-        meal_plans_collection.update_one({"user_name": user_name}, {"$set": {"meal_plan": meal_plan}})
+        meal_plans_collection.update_one({"uid": uid}, {"$set": {"meal_plan": meal_plan}})
         return jsonable_encoder({"message": "Meal swapped successfully", "new_meal": new_meal})
 
     return {"message": "No suitable meal found for swapping"}
+
 
 class LogMealRequest(BaseModel):
     uid: str
