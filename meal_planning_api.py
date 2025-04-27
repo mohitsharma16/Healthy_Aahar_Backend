@@ -445,19 +445,23 @@ def log_custom_meal(request: CustomMealRequest):
 from fastapi import Query
 from typing import Optional
 
-@app.get("/get_logged_meals")
-def get_logged_meals(uid: str = Query(...), date: Optional[str] = Query(None)):
+#endpoint for meal history from fastapi import Query
+
+@app.get("/get_meal_history")
+def get_meal_history(uid: str = Query(...), date: Optional[str] = Query(None)):
+    # Define query based on the uid and optional date
     query = {"uid": uid}
     if date:
-        query["date"] = date
+        query["date"] = date  # Filter by date if provided
 
+    # Fetch meals logged for the given user
     logs_cursor = nutrition_logs_collection.find(query)
     logs = list(logs_cursor)
 
     if not logs:
-        raise HTTPException(status_code=404, detail="No meal logs found")
+        raise HTTPException(status_code=404, detail="No meal history found for this user")
 
-    # Convert ObjectId to string for JSON compatibility
+    # Convert ObjectId to string for compatibility with JSON
     for log in logs:
         log["_id"] = str(log["_id"])
 
