@@ -283,6 +283,7 @@ class LogMealRequest(BaseModel):
     uid: str
     meal_id: str  # ID of the recipe from your recipe collection
     date: date    # Format: "YYYY-MM-DD"
+    meal_type: str  # new field: "breakfast", "lunch", or "dinner"
 
 @app.post("/log_meal")
 def log_meal(request: LogMealRequest):
@@ -305,6 +306,7 @@ def log_meal(request: LogMealRequest):
     meal_data = {
         "meal_id": str(recipe["_id"]),
         "meal_name": recipe["TranslatedRecipeName"],
+        "meal_type": request.meal_type,  # ADD meal_type here ✅
         "calories": recipe["Calories"],
         "protein": recipe["Protein"],
         "fat": recipe["Fat"],
