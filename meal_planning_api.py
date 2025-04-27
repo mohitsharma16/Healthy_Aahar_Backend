@@ -34,6 +34,7 @@ users_collection = db["users"]
 recipes_collection = db["recipes"]
 meal_plans_collection = db["meal_plans"]
 nutrition_logs_collection = db["nutrition_logs"]
+recipe_feedback_collection = db["recipe_feedback"] 
 
 
 def clean_text(text):
@@ -525,3 +526,27 @@ def get_weekly_report(uid: str):
 
     return jsonable_encoder(weekly_report)
 
+#endpoint for user feedback
+
+class RecipeFeedbackRequest(BaseModel):
+    recipe_id: str
+    rating: int  # Assuming rating is between 1 and 5
+    comments: str
+
+@app.post("/recipe_feedback/{uid}")
+def recipe_feedback(uid: str, request: RecipeFeedbackRequest):
+    user = users_collection.find_one({"uid": uid})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    feedback_data = {
+        "uid": uid,
+        "recipe_id": request.recipe_id,
+        "rating": request.rating,
+        "comments": request.comments,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+    # Store the feedback
+    recipe_feedback_collection.insert_one(feedback_data)
+    return {"message": "Feedback submitted successfully"}
