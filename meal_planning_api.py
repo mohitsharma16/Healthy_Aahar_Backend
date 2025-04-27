@@ -171,24 +171,35 @@ def generate_recipe_with_ingredients(ingredients, calories, goal):
     try:
         response = gemini_model.generate_content(prompt)
         
-        # Try to extract text safely based on your SDK
-        response_text = getattr(response, "text", None)
-        if not response_text and hasattr(response, "candidates"):
-            response_text = response.candidates[0].content.parts[0].text
+        # # Try to extract text safely based on your SDK
+        # response_text = getattr(response, "text", None)
+        # if not response_text and hasattr(response, "candidates"):
+        #     response_text = response.candidates[0].content.parts[0].text
         
-        if not response_text:
-            raise ValueError("Empty or invalid Gemini response")
+        # if not response_text:
+        #     raise ValueError("Empty or invalid Gemini response")
+        response_text = response.text.strip()
         
         print("Raw Gemini response:")
         print(response_text)
 
-        recipe_data = json.loads(response_text.strip())
-        recipes_collection.insert_one(recipe_data)
-        return recipe_data
+        match = re.search(r'\{.*\}', response_text, re.DOTALL)
+        if not match:
+            raise ValueError("Could not extract JSON from Gemini response")
+        recipe_dict = json.loads(match.group())
+        result = recipes_collection.insert_one(recipe_dict)
+        recipe_dict["_id"] = str(result.inserted_id)
+
+        return recipe_dict
+        # recipes_collection.insert_one(recipe_data)
+        # return recipe_data
     except Exception as e:
         print(f"Error generating recipe with ingredients: {e}")
         return None
 
+
+from fastapi.encoders import jsonable_encoder
+from bson import ObjectId
 
 @app.get("/generate_meal_plan/{user_name}")
 def generate_meal_plan(user_name: str):
@@ -207,33 +218,40 @@ def generate_meal_plan(user_name: str):
         calorie_target += 100
 
     meal_plan = []
-    meals_cursor = recipes_collection.find({"Calories": {"$gte": calorie_target - 50, "$lte": calorie_target + 50}})
+    meals_cursor = recipes_collection.find({
+        "Calories": {"$gte": calorie_target - 50, "$lte": calorie_target + 50}
+    })
     meals_list = list(meals_cursor)
 
-    # Shuffle the meals list to ensure variety on each API call
     random.shuffle(meals_list)
-    
-    # If not enough meals, generate AI-based recipes
+
+    # Generate AI recipes if not enough
     while len(meals_list) < 3:
         ai_recipe = generate_recipe(calorie_target, goal)
         if ai_recipe:
+            # Insert into DB to generate an _id and reuse it
+            inserted = recipes_collection.insert_one(ai_recipe)
+            ai_recipe["_id"] = str(inserted.inserted_id)
             meals_list.append(ai_recipe)
         else:
             break
-    
+
     if not meals_list:
         raise HTTPException(status_code=404, detail="No suitable meals found")
-    
-    # Select different meals for the plan
+
+    # Select 3 meals and ensure _id is stringified
     for _ in range(3):
-        meal = meals_list.pop(0) if meals_list else None
-        if meal:
-            meal["_id"] = str(meal["_id"])  # Convert ObjectId to string
-            meal_plan.append(meal)
-    
-    meal_plan_data = {"user_name": user_name, "meal_plan": meal_plan}
+        meal = meals_list.pop(0)
+        if "_id" in meal:
+            meal["_id"] = str(meal["_id"])
+        meal_plan.append(meal)
+
+    meal_plan_data = {
+        "user_name": user_name,
+        "meal_plan": meal_plan
+    }
+
     meal_plans_collection.insert_one(jsonable_encoder(meal_plan_data))
-    
     return jsonable_encoder(meal_plan_data)
 
 class SwapMealRequest(BaseModel):
@@ -273,9 +291,13 @@ def log_meal(request: LogMealRequest):
         raise HTTPException(status_code=404, detail="User not found")
 
     try:
-        recipe = recipes_collection.find_one({"_id": pymongo.ObjectId(request.meal_id)})
+        print("meal_id received:", request.meal_id)
+        print("Type of meal_id:", type(request.meal_id))
+        recipe = recipes_collection.find_one({"_id": ObjectId(request.meal_id.strip())})
+        
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid meal_id format")
+        
 
     if not recipe:
         raise HTTPException(status_code=404, detail="Recipe not found")
@@ -337,6 +359,9 @@ class CustomMealRequest(BaseModel):
     date: date
     food_description: str
 
+from fastapi import Body
+import re
+
 @app.post("/log_custom_meal")
 def log_custom_meal(request: CustomMealRequest):
     user = users_collection.find_one({"uid": request.uid})
@@ -354,19 +379,33 @@ def log_custom_meal(request: CustomMealRequest):
         "carbs": grams as integer
     }}
     """
+
     try:
         response = gemini_model.generate_content(prompt)
-        meal_data = json.loads(response.text.strip())
+        response_text = response.text.strip()
 
-        # Add safety defaults if anything is missing
+        print("Raw Gemini response:")
+        print(response_text)
+
+        # Clean up response and parse as JSON
+        json_str_match = re.search(r"\{.*\}", response_text, re.DOTALL)
+        if not json_str_match:
+            raise ValueError("Gemini response doesn't contain valid JSON")
+
+        json_str = json_str_match.group(0)
+        meal_data = json.loads(json_str)
+
+        # Add fallback values if keys are missing
         meal_data.setdefault("meal_name", request.food_description)
         meal_data.setdefault("calories", 0)
         meal_data.setdefault("protein", 0)
         meal_data.setdefault("fat", 0)
         meal_data.setdefault("carbs", 0)
 
+        # Date string formatting
         date_str = str(request.date)
 
+        # Fetch existing log
         log = nutrition_logs_collection.find_one({"uid": request.uid, "date": date_str})
 
         if log:
@@ -400,3 +439,24 @@ def log_custom_meal(request: CustomMealRequest):
     except Exception as e:
         print("Gemini error:", e)
         raise HTTPException(status_code=500, detail="Failed to estimate nutrition")
+
+from fastapi import Query
+from typing import Optional
+
+@app.get("/get_logged_meals")
+def get_logged_meals(uid: str = Query(...), date: Optional[str] = Query(None)):
+    query = {"uid": uid}
+    if date:
+        query["date"] = date
+
+    logs_cursor = nutrition_logs_collection.find(query)
+    logs = list(logs_cursor)
+
+    if not logs:
+        raise HTTPException(status_code=404, detail="No meal logs found")
+
+    # Convert ObjectId to string for JSON compatibility
+    for log in logs:
+        log["_id"] = str(log["_id"])
+
+    return jsonable_encoder(logs)
