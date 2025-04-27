@@ -201,17 +201,36 @@ def generate_recipe_with_ingredients(ingredients, calories, goal):
 from fastapi.encoders import jsonable_encoder
 from bson import ObjectId
 
-@app.get("/generate_meal_plan/{user_name}")
-def generate_meal_plan(user_name: str):
-    user = users_collection.find_one({"name": user_name})
+from datetime import datetime
+
+def custom_jsonable_encoder(obj):
+    return jsonable_encoder(
+        obj,
+        custom_encoder={ObjectId: str}
+    )
+
+@app.get("/generate_meal_plan/{uid}")
+def generate_meal_plan(uid: str):
+    user = users_collection.find_one({"uid": uid})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    user_name = user["name"]  # We still need username to save and find meal plans
+
+    today_date = datetime.utcnow().date()
+
+    existing_plan = meal_plans_collection.find_one({
+        "user_name": user_name,
+        "date": str(today_date)
+    })
+
+    if existing_plan:
+        return custom_jsonable_encoder(existing_plan)
+
     daily_calories = user["tdee"]
-    calorie_target = daily_calories / 3  # Assume 3 meals per day
+    calorie_target = daily_calories / 3
     goal = user["goal"]
 
-    # Adjust calorie targets for goals
     if goal == "weight_loss":
         calorie_target -= 100
     elif goal == "weight_gain":
@@ -225,11 +244,9 @@ def generate_meal_plan(user_name: str):
 
     random.shuffle(meals_list)
 
-    # Generate AI recipes if not enough
     while len(meals_list) < 3:
         ai_recipe = generate_recipe(calorie_target, goal)
         if ai_recipe:
-            # Insert into DB to generate an _id and reuse it
             inserted = recipes_collection.insert_one(ai_recipe)
             ai_recipe["_id"] = str(inserted.inserted_id)
             meals_list.append(ai_recipe)
@@ -239,7 +256,6 @@ def generate_meal_plan(user_name: str):
     if not meals_list:
         raise HTTPException(status_code=404, detail="No suitable meals found")
 
-    # Select 3 meals and ensure _id is stringified
     for _ in range(3):
         meal = meals_list.pop(0)
         if "_id" in meal:
@@ -248,11 +264,13 @@ def generate_meal_plan(user_name: str):
 
     meal_plan_data = {
         "user_name": user_name,
-        "meal_plan": meal_plan
+        "meal_plan": meal_plan,
+        "date": str(today_date)
     }
 
     meal_plans_collection.insert_one(jsonable_encoder(meal_plan_data))
     return jsonable_encoder(meal_plan_data)
+
 
 class SwapMealRequest(BaseModel):
     meal_index: int
