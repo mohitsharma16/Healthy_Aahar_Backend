@@ -1,0 +1,9 @@
+1st we need a endpoint for entering the meals acording to lunch breakfast and dinner for our 
+recipies okay( we actually have this endpoint it is called log a  meal .)
+2nd we need a endpoint for getting the list of recipies like previous melas or meals history okay.
+3rd we need to update the current endpoint for recipe recommendation because for now 
+on every call it is giving recipies it should give new recipies after every 24 hours.
+4th we need an endpoint for getting the weekly reports of the user.
+5th we need an endoint for the feedback of the user about the recipes suggested.
+6th we also need to tag the recipies for breakfast, lunch , dinner or we can keep meal 1 , meal 2,
+meal 3 also.
