@@ -6,7 +6,7 @@ import os
 import re
 import json
 import time
-from datetime import date
+from datetime import date, timedelta
 import random
 from dotenv import load_dotenv
 import google.generativeai as genai
@@ -486,3 +486,42 @@ def get_meal_history(uid: str = Query(...), date: Optional[str] = Query(None)):
         log["_id"] = str(log["_id"])
 
     return jsonable_encoder(logs)
+
+#endpoint for getting weekly reports@app.get("/weekly_report/{uid}")
+@app.get("/weekly_report/{uid}")
+def get_weekly_report(uid: str):
+    user = users_collection.find_one({"uid": uid})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Calculate the start and end date of the week
+    today_date = datetime.utcnow().date()
+    start_date = today_date - timedelta(days=today_date.weekday())  # Start of the week
+    end_date = start_date + timedelta(days=6)  # End of the week
+
+    # Fetch the meals logged during the week
+    meal_history = nutrition_logs_collection.find({
+        "uid": uid,
+        "timestamp": {"$gte": start_date.isoformat(), "$lte": end_date.isoformat()}
+    })
+
+    meals = list(meal_history)
+
+    if not meals:
+        return {"message": "No meals logged this week"}
+
+    # Summarize or return detailed data
+    total_calories = sum(meal["calories"] for meal in meals)
+    meal_count = len(meals)
+    
+    weekly_report = {
+        "user_id": uid,
+        "week_start": str(start_date),
+        "week_end": str(end_date),
+        "total_calories": total_calories,
+        "meal_count": meal_count,
+        "meals": meals
+    }
+
+    return jsonable_encoder(weekly_report)
+
