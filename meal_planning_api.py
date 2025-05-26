@@ -216,16 +216,20 @@ def generate_meal_plan(uid: str):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    user_name = user["name"]  # We can still store/display the user's name if needed
-
+    user_name = user["name"]
     today_date = datetime.utcnow().date()
+    date_str = str(today_date)
 
     existing_plan = meal_plans_collection.find_one({
         "uid": uid,
-        "date": str(today_date)
+        "date": date_str
     })
 
     if existing_plan:
+        # Always set isLogged to false initially for existing plans
+        for meal in existing_plan["meal_plan"]:
+            meal["isLogged"] = False
+
         return custom_jsonable_encoder(existing_plan)
 
     daily_calories = user["tdee"]
@@ -257,17 +261,27 @@ def generate_meal_plan(uid: str):
     if not meals_list:
         raise HTTPException(status_code=404, detail="No suitable meals found")
 
+    # Get today's logged meals to check which ones are already logged
+    nutrition_log = nutrition_logs_collection.find_one({"uid": uid, "date": date_str})
+    logged_meal_ids = []
+    if nutrition_log:
+        logged_meal_ids = [meal["meal_id"] for meal in nutrition_log["meals"]]
+
     for _ in range(3):
         meal = meals_list.pop(0)
         if "_id" in meal:
             meal["_id"] = str(meal["_id"])
+        
+        # Always set isLogged to false initially
+        meal["isLogged"] = False
+        
         meal_plan.append(meal)
 
     meal_plan_data = {
-        "uid": uid,                       # <<< ADDED this
-        "user_name": user_name,            # <<< Still keeping username for info
+        "uid": uid,
+        "user_name": user_name,
         "meal_plan": meal_plan,
-        "date": str(today_date)
+        "date": date_str
     }
 
     meal_plans_collection.insert_one(jsonable_encoder(meal_plan_data))
