@@ -596,3 +596,48 @@ def recipe_feedback(uid: str, request: RecipeFeedbackRequest):
     # Store the feedback
     recipe_feedback_collection.insert_one(feedback_data)
     return {"message": "Feedback submitted successfully"}
+
+
+# recipe fetching and details endpoint 
+
+@app.get("/get_recipe/{recipe_id}")
+def get_recipe_details(recipe_id: str):
+    """
+    Get detailed information about a specific recipe by its ID
+    """
+    try:
+        recipe = recipes_collection.find_one({"_id": ObjectId(recipe_id.strip())})
+        
+        if not recipe:
+            raise HTTPException(status_code=404, detail="Recipe not found")
+        
+        # Convert ObjectId to string for JSON serialization
+        recipe["_id"] = str(recipe["_id"])
+        
+        # Get average rating and feedback count for this recipe
+        feedback_cursor = recipe_feedback_collection.find({"recipe_id": recipe_id})
+        feedback_list = list(feedback_cursor)
+        
+        if feedback_list:
+            total_ratings = sum(feedback["rating"] for feedback in feedback_list)
+            avg_rating = round(total_ratings / len(feedback_list), 1)
+            feedback_count = len(feedback_list)
+        else:
+            avg_rating = 0
+            feedback_count = 0
+        
+        # Add rating information to recipe response
+        recipe["average_rating"] = avg_rating
+        recipe["feedback_count"] = feedback_count
+        
+        return jsonable_encoder(recipe)
+        
+    except Exception as e:
+        # Handle invalid ObjectId format
+        if "invalid ObjectId" in str(e).lower() or "not a valid ObjectId" in str(e):
+            raise HTTPException(status_code=400, detail="Invalid recipe ID format")
+        else:
+            print(f"Error fetching recipe details: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
+
+
