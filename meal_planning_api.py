@@ -226,9 +226,22 @@ def generate_meal_plan(uid: str):
     })
 
     if existing_plan:
-        # Always set isLogged to false initially for existing plans
+        # Get today's logged meals to check which ones are already logged
+        nutrition_log = nutrition_logs_collection.find_one({"uid": uid, "date": date_str})
+        logged_meal_ids = []
+        if nutrition_log:
+            logged_meal_ids = [meal["meal_id"] for meal in nutrition_log["meals"]]
+
+        # Update isLogged status based on what's actually logged
         for meal in existing_plan["meal_plan"]:
-            meal["isLogged"] = False
+            meal_id = str(meal.get("_id", ""))
+            meal["isLogged"] = meal_id in logged_meal_ids
+
+        # Update the meal plan in database with correct isLogged status
+        meal_plans_collection.update_one(
+            {"uid": uid, "date": date_str},
+            {"$set": {"meal_plan": existing_plan["meal_plan"]}}
+        )
 
         return custom_jsonable_encoder(existing_plan)
 
@@ -272,8 +285,9 @@ def generate_meal_plan(uid: str):
         if "_id" in meal:
             meal["_id"] = str(meal["_id"])
         
-        # Always set isLogged to false initially
-        meal["isLogged"] = False
+        # Check if this meal is already logged
+        meal_id = str(meal.get("_id", ""))
+        meal["isLogged"] = meal_id in logged_meal_ids
         
         meal_plan.append(meal)
 
@@ -334,14 +348,13 @@ def log_meal(request: LogMealRequest):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid meal_id format")
         
-
     if not recipe:
         raise HTTPException(status_code=404, detail="Recipe not found")
 
     meal_data = {
         "meal_id": str(recipe["_id"]),
         "meal_name": recipe["TranslatedRecipeName"],
-        "meal_type": request.meal_type,  # ADD meal_type here ✅
+        "meal_type": request.meal_type,
         "calories": recipe["Calories"],
         "protein": recipe["Protein"],
         "fat": recipe["Fat"],
@@ -379,6 +392,21 @@ def log_meal(request: LogMealRequest):
                 "carbs": meal_data["carbs"]
             }
         })
+
+    # UPDATE THE MEAL PLAN TO SET isLogged = True for this meal
+    meal_plan = meal_plans_collection.find_one({"uid": request.uid, "date": date_str})
+    if meal_plan:
+        # Find the meal in the meal plan and update its isLogged status
+        for i, meal in enumerate(meal_plan["meal_plan"]):
+            if str(meal.get("_id", "")) == request.meal_id:
+                meal_plan["meal_plan"][i]["isLogged"] = True
+                break
+        
+        # Update the meal plan in the database
+        meal_plans_collection.update_one(
+            {"uid": request.uid, "date": date_str},
+            {"$set": {"meal_plan": meal_plan["meal_plan"]}}
+        )
 
     return {"message": "Meal logged successfully"}
 
