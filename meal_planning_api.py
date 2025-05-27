@@ -716,3 +716,31 @@ def get_recipes_by_cuisine(cuisine: str, limit: int = 10):
         print(f"Error fetching recipes by cuisine: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+# Optional: Search recipes by name
+@app.get("/search_recipes")
+def search_recipes(query: str = Query(..., min_length=1), limit: int = Query(10, ge=1, le=50)):
+    """
+    Search recipes by name (case-insensitive partial matching)
+    """
+    try:
+        recipes_cursor = recipes_collection.find(
+            {"TranslatedRecipeName": {"$regex": query, "$options": "i"}}
+        ).limit(limit)
+        
+        recipes_list = list(recipes_cursor)
+        
+        if not recipes_list:
+            return {"message": f"No recipes found matching: {query}", "recipes": []}
+        
+        # Convert ObjectIds to strings
+        for recipe in recipes_list:
+            recipe["_id"] = str(recipe["_id"])
+        
+        return {
+            "message": f"Found {len(recipes_list)} recipes matching: {query}",
+            "recipes": jsonable_encoder(recipes_list)
+        }
+        
+    except Exception as e:
+        print(f"Error searching recipes: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
