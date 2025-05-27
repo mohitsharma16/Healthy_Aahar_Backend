@@ -688,3 +688,31 @@ def get_recipe_with_feedback(recipe_id: str):
             print(f"Error fetching recipe with feedback: {e}")
             raise HTTPException(status_code=500, detail="Internal server error")
 
+# Optional: Get recipes by cuisine type
+@app.get("/get_recipes_by_cuisine/{cuisine}")
+def get_recipes_by_cuisine(cuisine: str, limit: int = 10):
+    """
+    Get recipes filtered by cuisine type
+    """
+    try:
+        recipes_cursor = recipes_collection.find(
+            {"Cuisine": {"$regex": f"^{cuisine}$", "$options": "i"}}
+        ).limit(limit)
+        
+        recipes_list = list(recipes_cursor)
+        
+        if not recipes_list:
+            raise HTTPException(status_code=404, detail=f"No recipes found for cuisine: {cuisine}")
+        
+        # Convert ObjectIds to strings
+        for recipe in recipes_list:
+            recipe["_id"] = str(recipe["_id"])
+        
+        return jsonable_encoder(recipes_list)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error fetching recipes by cuisine: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
