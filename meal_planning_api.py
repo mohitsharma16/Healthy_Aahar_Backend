@@ -535,43 +535,254 @@ def get_meal_history(uid: str = Query(...), date: Optional[str] = Query(None)):
     return jsonable_encoder(logs)
 
 #endpoint for getting weekly reports@app.get("/weekly_report/{uid}")
+# Replace your existing weekly_report endpoint with this improved version
+
 @app.get("/weekly_report/{uid}")
 def get_weekly_report(uid: str):
     user = users_collection.find_one({"uid": uid})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    # Calculate the start and end date of the week
+    # Calculate the start and end date of the week (Monday to Sunday)
     today_date = datetime.utcnow().date()
-    start_date = today_date - timedelta(days=today_date.weekday())  # Start of the week
-    end_date = start_date + timedelta(days=6)  # End of the week
-
-    # Fetch the meals logged during the week
-    meal_history = nutrition_logs_collection.find({
+    start_date = today_date - timedelta(days=today_date.weekday())
+    end_date = start_date + timedelta(days=6)
+    
+    # Generate list of all dates in the week
+    week_dates = []
+    current_date = start_date
+    while current_date <= end_date:
+        week_dates.append(current_date.isoformat())
+        current_date += timedelta(days=1)
+    
+    # Fetch nutrition logs for all dates in the week
+    nutrition_logs = nutrition_logs_collection.find({
         "uid": uid,
-        "timestamp": {"$gte": start_date.isoformat(), "$lte": end_date.isoformat()}
+        "date": {"$in": week_dates}
     })
-
-    meals = list(meal_history)
-
-    if not meals:
-        return {"message": "No meals logged this week"}
-
-    # Summarize or return detailed data
-    total_calories = sum(meal["calories"] for meal in meals)
-    meal_count = len(meals)
+    
+    logs_list = list(nutrition_logs)
+    
+    if not logs_list:
+        return {
+            "message": "No meals logged this week",
+            "user_id": uid,
+            "week_start": str(start_date),
+            "week_end": str(end_date),
+            "days_logged": 0,
+            "total_days": 7,
+            "weekly_totals": {
+                "calories": 0,
+                "protein": 0,
+                "fat": 0,
+                "carbs": 0
+            },
+            "daily_averages": {
+                "calories": 0,
+                "protein": 0,
+                "fat": 0,
+                "carbs": 0
+            },
+            "daily_breakdown": [],
+            "goal_analysis": {
+                "target_daily_calories": user.get("tdee", 0),
+                "days_meeting_goal": 0,
+                "average_goal_percentage": 0
+            }
+        }
+    
+    # Process the logs
+    weekly_totals = {"calories": 0, "protein": 0, "fat": 0, "carbs": 0}
+    daily_breakdown = []
+    days_meeting_goal = 0
+    target_calories = user.get("tdee", 0)
+    
+    # Create a dictionary for quick lookup of logs by date
+    logs_by_date = {log["date"]: log for log in logs_list}
+    
+    # Process each day of the week
+    for date_str in week_dates:
+        if date_str in logs_by_date:
+            log = logs_by_date[date_str]
+            day_totals = log.get("total", {"calories": 0, "protein": 0, "fat": 0, "carbs": 0})
+            
+            # Add to weekly totals
+            for nutrient in weekly_totals:
+                weekly_totals[nutrient] += day_totals.get(nutrient, 0)
+            
+            # Check if day meets calorie goal (within 10% tolerance)
+            if target_calories > 0:
+                goal_percentage = (day_totals.get("calories", 0) / target_calories) * 100
+                if 90 <= goal_percentage <= 110:  # Within 10% of target
+                    days_meeting_goal += 1
+            
+            # Add to daily breakdown
+            daily_breakdown.append({
+                "date": date_str,
+                "day_name": datetime.fromisoformat(date_str).strftime("%A"),
+                "totals": day_totals,
+                "meals_count": len(log.get("meals", [])),
+                "goal_percentage": round(goal_percentage, 1) if target_calories > 0 else 0
+            })
+        else:
+            # No data for this day
+            daily_breakdown.append({
+                "date": date_str,
+                "day_name": datetime.fromisoformat(date_str).strftime("%A"),
+                "totals": {"calories": 0, "protein": 0, "fat": 0, "carbs": 0},
+                "meals_count": 0,
+                "goal_percentage": 0
+            })
+    
+    # Calculate daily averages (only for days with data)
+    days_with_data = len(logs_list)
+    daily_averages = {
+        nutrient: round(total / days_with_data, 1) if days_with_data > 0 else 0
+        for nutrient, total in weekly_totals.items()
+    }
+    
+    # Calculate average goal percentage
+    total_goal_percentage = sum(day["goal_percentage"] for day in daily_breakdown if day["goal_percentage"] > 0)
+    average_goal_percentage = round(total_goal_percentage / days_with_data, 1) if days_with_data > 0 else 0
     
     weekly_report = {
         "user_id": uid,
+        "user_name": user.get("name", ""),
         "week_start": str(start_date),
         "week_end": str(end_date),
-        "total_calories": total_calories,
-        "meal_count": meal_count,
-        "meals": meals
+        "days_logged": days_with_data,
+        "total_days": 7,
+        "weekly_totals": weekly_totals,
+        "daily_averages": daily_averages,
+        "daily_breakdown": daily_breakdown,
+        "goal_analysis": {
+            "target_daily_calories": target_calories,
+            "days_meeting_goal": days_meeting_goal,
+            "average_goal_percentage": average_goal_percentage,
+            "goal_adherence_rate": round((days_meeting_goal / 7) * 100, 1)
+        },
+        "insights": generate_weekly_insights(daily_breakdown, target_calories, days_with_data)
     }
-
+    
     return jsonable_encoder(weekly_report)
 
+def generate_weekly_insights(daily_breakdown, target_calories, days_with_data):
+    """Generate insights based on weekly nutrition data"""
+    insights = []
+    
+    if days_with_data == 0:
+        insights.append("No nutrition data logged this week. Start tracking your meals to see insights!")
+        return insights
+    
+    # Consistency insight
+    consistency_rate = (days_with_data / 7) * 100
+    if consistency_rate >= 80:
+        insights.append("Great job! You're consistently tracking your nutrition.")
+    elif consistency_rate >= 50:
+        insights.append("You're doing well with tracking. Try to log meals more consistently.")
+    else:
+        insights.append("Consider tracking your meals more regularly for better insights.")
+    
+    # Calorie goal insight
+    days_with_calories = [day for day in daily_breakdown if day["totals"]["calories"] > 0]
+    if days_with_calories and target_calories > 0:
+        avg_calories = sum(day["totals"]["calories"] for day in days_with_calories) / len(days_with_calories)
+        if avg_calories < target_calories * 0.8:
+            insights.append("You're eating below your calorie target. Consider adding more nutritious foods.")
+        elif avg_calories > target_calories * 1.2:
+            insights.append("You're eating above your calorie target. Consider portion control.")
+        else:
+            insights.append("You're maintaining good calorie balance!")
+    
+    # Activity insight
+    if days_with_data >= 5:
+        insights.append("Excellent tracking consistency! Keep it up for better health insights.")
+    
+    return insights
+
+# Additional endpoint for custom date range
+@app.get("/nutrition_report/{uid}")
+def get_nutrition_report(
+    uid: str, 
+    start_date: str = Query(..., description="Start date in YYYY-MM-DD format"),
+    end_date: str = Query(..., description="End date in YYYY-MM-DD format")
+):
+    """Get nutrition report for a custom date range"""
+    user = users_collection.find_one({"uid": uid})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    try:
+        # Validate date format
+        start_dt = datetime.fromisoformat(start_date).date()
+        end_dt = datetime.fromisoformat(end_date).date()
+        
+        if start_dt > end_dt:
+            raise HTTPException(status_code=400, detail="Start date must be before end date")
+            
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    
+    # Generate list of dates in range
+    date_range = []
+    current_date = start_dt
+    while current_date <= end_dt:
+        date_range.append(current_date.isoformat())
+        current_date += timedelta(days=1)
+    
+    # Fetch nutrition logs for the date range
+    nutrition_logs = nutrition_logs_collection.find({
+        "uid": uid,
+        "date": {"$in": date_range}
+    })
+    
+    logs_list = list(nutrition_logs)
+    
+    # Process similar to weekly report
+    total_nutrition = {"calories": 0, "protein": 0, "fat": 0, "carbs": 0}
+    daily_data = []
+    
+    logs_by_date = {log["date"]: log for log in logs_list}
+    
+    for date_str in date_range:
+        if date_str in logs_by_date:
+            log = logs_by_date[date_str]
+            day_totals = log.get("total", {"calories": 0, "protein": 0, "fat": 0, "carbs": 0})
+            
+            for nutrient in total_nutrition:
+                total_nutrition[nutrient] += day_totals.get(nutrient, 0)
+            
+            daily_data.append({
+                "date": date_str,
+                "totals": day_totals,
+                "meals_count": len(log.get("meals", []))
+            })
+    
+    days_with_data = len(logs_list)
+    total_days = len(date_range)
+    
+    # Calculate averages
+    averages = {
+        nutrient: round(total / days_with_data, 1) if days_with_data > 0 else 0
+        for nutrient, total in total_nutrition.items()
+    }
+    
+    return jsonable_encoder({
+        "user_id": uid,
+        "date_range": {
+            "start": start_date,
+            "end": end_date,
+            "total_days": total_days,
+            "days_with_data": days_with_data
+        },
+        "totals": total_nutrition,
+        "averages": averages,
+        "daily_data": daily_data,
+        "summary": {
+            "tracking_percentage": round((days_with_data / total_days) * 100, 1),
+            "most_active_day": max(daily_data, key=lambda x: x["meals_count"])["date"] if daily_data else None
+        }
+    })
 #endpoint for user feedback
 
 class RecipeFeedbackRequest(BaseModel):
