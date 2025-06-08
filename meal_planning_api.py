@@ -245,7 +245,7 @@ def generate_meal_plan(uid: str):
 
         return custom_jsonable_encoder(existing_plan)
 
-    daily_calories = user["tdee"]
+    daily_calories = user["bmr"]
     calorie_target = daily_calories / 3
     goal = user["goal"]
 
